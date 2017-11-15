@@ -39,3 +39,7 @@ Thumbs.db
 # R Studio Projects  #
 ######################
 *.Rproj
+.Rproj.user
+*.RData
+.Rhistory
+*.rdata
