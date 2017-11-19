@@ -1,0 +1,976 @@
+---
+title: "KSB-621 - Immersion Project"
+author: "M. Johnson; S. Medellin; S. Douglass; C. Renz; D. Shackle"
+date: "November 14, 2017"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+<center> <h2>Project Objective</h2> </center>
+
+*The objective is to determine how to better target past customers to achieve a similar response rate of 80% but reduce the volume of emails so that customers that are not likely to return will not receive them.The second part of the business problem is to determine usable information from third-party data in retaining the response rates but minimizing the volume of emails.*
+
+<center> <h2>Get the Data</h2> </center>
+<center> <h4>(Fetch the data from Dropbox, Review the Data, First Data Reduction)</h4> </center>
+
+**Prepare the R libraries**
+```{R}
+## This continues the code development that began on the AU campus
+#  Identify the package to be used and open the respective libraries
+options(scipen=999)
+
+packages <- c("data.table"
+              , "dplyr"
+              , "GGally"
+              , "ggplot2"
+              , "Hmisc"
+              , "knitr"
+              , "reshape2"
+              , "RODBC"
+              , "scales"
+              , "stringr")
+
+for (package in packages) {
+  message(sprintf("Checking that %s is installed...", package))
+  if (!package %in% row.names(installed.packages())) {
+    install.packages(package, repos = "https://cran.rstudio.com")
+  }
+}
+
+library(data.table)
+library(dplyr)
+library(GGally)
+library(ggplot2)
+library(Hmisc)
+library(knitr)
+library(reshape2)
+library(RODBC)
+library(scales)
+library(stringr)
+
+```
+
+**Read the 100K data into a dataframe and reduce to MATH = 1**
+
+```{r}
+
+## Get the 100K data from Dropbox
+PATH_TO_DATA = 'C:/Users/scott/Dropbox/MSAn Capstone - Fall 2017/Data/3. 100K Sampled Data/FINAL2_SAMPLED100.csv'
+
+## Form the total data frame
+df <- read.csv(PATH_TO_DATA)
+
+## Remove objects that are no longer needed
+rm(package)
+rm(packages)
+rm(PATH_TO_DATA)
+
+## Split the data into two peices; this will keep on the match data
+df.m1 <- df[df$MATCH==1,]
+
+```
+
+**First Variable Reduction**
+
+```{r}
+
+## Check the data in the column
+#  Remove the variables from the data if 90% of the data in the column is the same value
+eor <- nrow(df.m1)[1]
+eoc <- dim(df.m1)[2] - 1
+drop.vars = c()
+
+## Compute the mode of a factor vector
+Mode <- function(v){
+  uniqv <- na.omit(unique(v))
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+## Remove the variables where 90% of the values are common or are missing
+#  Will use the mode function to determine the most common value
+#  Will begin at the ninth variable as there are the start of the third party data
+#  The last variable is 'MATCH' variable and should not be included
+for(i in 9:eoc){
+  
+  var.mode <- Mode(df.m1[,i])
+  len.na <- sum(is.na(df.m1[,i]))
+  len.mode <- length(df.m1[df.m1[,i]==var.mode,i])
+  if(len.na > len.mode){
+    len.num <- len.na
+  } else {
+    len.num <- len.mode
+  }
+  
+  if(len.num/eor >= .90){
+    if (length(drop.vars) == 0){
+      drop.vars <-c(names(df.m1[i]))  
+    } else {
+      drop.vars <-c(drop.vars, names(df.m1[i]))
+    }
+  }
+}
+
+## Reveal dropped variables for examination
+drop.vars
+
+
+#  Evaluate other variables that having little value
+bypassVars <- c(
+    "V4"      # <- Does not match with State
+  , "V38"     # <- Can't see how this variable helps
+  , "Zip4"    # <- Can't see how this variable helps
+)
+
+#  Combine the two lists
+drop.vars <- Reduce(union, list(drop.vars, bypassVars))
+
+
+## Reduce df.m1 for the variables that failed the 90% test
+# Ref: https://stackoverflow.com/questions/4605206/drop-data-frame-columns-by-name
+df.m1.r <- df.m1[ , !(names(df.m1) %in% drop.vars)]
+
+```
+
+**Remove obsolete data objects for memory managment**
+
+```{r}
+
+## Remove objects that are no longer needed
+rm(eoc)
+rm(eor)
+rm(i)
+rm(len.mode)
+rm(len.na)
+rm(len.num)
+rm(var.mode)
+rm(bypassVars)
+rm(drop.vars)
+rm(Mode)
+rm(df.m1)
+
+```
+
+<center> <h2>PART I</h2> </center>
+<center> <h4>(Classify the variables to a specific data type)</h4> </center>
+<center> <h4>(Determines the type transformation to be performed)</h4> </center>
+
+```{r}
+
+## This part of the code is soley intended to treat variables having responses that require a
+#  treatment before use.  These include variables in which "blank" means something.  These variables
+#  will be set to 99 (as a category).  There are also variables having responses that are "yes" or
+#  "no" that will be converted to 1's or 0's.  The outcome of this section will channel directly
+#  into a missing variable treatment operation.
+
+isBlnkVar <- c(
+    "Upmarket"
+  , "V35"  , "V42"  
+  , "V43"  , "V44"
+  , "V45"  , "V46"  
+  , "V47"  , "V48"
+  , "V49"  , "V50"
+  , "V51"  , "V52"
+  , "V53"  , "V54"
+  , "V55"  , "V56"
+  , "V57"  , "V65"
+  , "V74"  , "V80"
+  , "V81"  , "V85"
+  , "V86"  , "V160"
+  )
+
+## A note about the response variables
+#  There are no missing values in RESP
+#  It does not require any special handing
+
+isRespVar <- c(
+  "RESP"
+)
+
+#  Zeros in these variables will be converted to nulls; zeros are meaningless
+isZeroVar <- c(
+    "V14"  , "V69"  , "V81"  , "V82"  , "V88"  , "V90"  , "V92"  , "V93"
+  , "V134"  , "V136"  , "V140"
+)
+
+#  Yes in these variables will be converted to 1
+isYesNoVar <- c(
+    "V71"  , "V119"  , "V163"  , "V164"  , "V165"  , "V166"  , "V167"  , "V168"
+  , "V169"  , "V170"  , "V171"  , "V172"  , "V173"  , "V174"  , "V175"  , "V176"
+  , "V177"  , "V178"  , "V179"  , "V180"  , "V181"  , "V182"  , "V183"  , "V184"
+  , "V185"  , "V186"  , "V187"  , "V188"  , "V189"  , "V190"  , "V191"  , "V192"
+  , "V193"  , "V194"  , "V195"  , "V196"  , "V197"  , "V198"  , "V199"  , "V200"
+  , "V201"  , "V202"  , "V203"  , "V204"  , "V205"  , "V206"  , "V207"  , "V208"
+  , "V209"  , "V210"  , "V211"  , "V212"  , "V213"  , "V214"  , "V215"  , "V216"
+  , "V217"  , "V218"  , "V219"  , "V220"  , "V221"  , "V222"  , "V223"  , "V224"
+  , "V225"  , "V226"  , "V227"  , "V228"  , "V229"  , "V230"  , "V231"  , "V232"
+  , "V233"  , "V234"  , "V235"  , "V236"  , "V237"  , "V238"  , "V239"  , "V240"
+  , "V241"  , "V242"  , "V243"  , "V244"  , "V245"  , "V246"  , "V247"  , "V248"
+  , "V249"  , "V250"  , "V251"  , "V252"  , "V253"  , "V254"  , "V255"  , "V256"
+  , "V257"  , "V258"  , "V259"  , "V260"  , "V261"  , "V262"  , "V263"  , "V264"
+  , "V265"
+  )
+
+#  These variables had leading zeros requiring treatment; they need to be replaced
+isPadVar <- c(
+  "Zip"  , "Zip4"
+  , "V7"  , "V12"  , "V13"  , "V62"  , "V68"  , "V69"  , "V79"  , "V80"
+  , "V82"  , "V83"  , "V285"  , "V286"  , "V287"  , "V288"
+)
+
+#  These variables are continuous numeric variables
+isNumVar <- c(
+  "days_since_last_activity"
+  , "V73"  , "V99"  , "V101"  , "V103"  , "V105"  , "V106"  , "V107"  , "V110"
+  , "V113"  , "V131"  , "V132"  , "V272"  , "V274"  , "V276"  , "V278"
+)
+
+```
+
+**Output first diagnostic file of the variables transformation as 'df.m1_Part1_Diag.txt'**
+
+```{r}
+
+## Set up a sink file for variable review
+#  File will be empty if spool variable is set to 0
+#  The print spool is large; to turn it off, set spool to zero
+spool <- 0
+
+sink(file = "C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part1_Diag.txt"
+  , append = FALSE
+  , type = c("output", "message")
+  , split = FALSE)
+
+
+## Some data isn't really missing, the blanks have meaning
+# Based upon the reading, these variables need a conversion to character from factor to work
+# The first six variables should not have blanks
+
+# Decided to use a loop as the function seemed complex (for now)
+# The lesson learned here is the when refering to a column by i, use i
+# https://stackoverflow.com/questions/3969852/update-data-frame-via-function-doesnt-work
+# https://stackoverflow.com/questions/16819956/invalid-factor-level-na-generated
+k <- 3
+l <- ncol(df.m1.r)-1
+
+for (i in k:l){
+  
+  if(!names(df.m1.r[i]) %in% isRespVar){
+    
+    if(spool==1){
+      print(paste(names(df.m1.r[i]),"->",class(df.m1.r[,i])))
+      print(paste("Variable",i))
+      cat("\n")
+    }
+    
+    if(names(df.m1.r[i]) %in% isPadVar) {
+      
+      # This section will process the variables that appear to need padding
+      
+      if (names(df.m1.r[i]) == "V287"){
+        df.m1.r[,i] <- str_pad(df.m1.r[,i], 7, pad = "0")
+      }
+      if (names(df.m1.r[i]) == "Zip" 
+          | names(df.m1.r[i]) == "V13"){
+        df.m1.r[,i] <- str_pad(df.m1.r[,i], 5, pad = "0")
+      }
+      if (names(df.m1.r[i]) == "Zip4"
+          | names(df.m1.r[i]) == "V79"){
+        df.m1.r[,i] <- str_pad(df.m1.r[,i], 4, pad = "0")
+      }
+      if (names(df.m1.r[i]) == "V7" 
+          | names(df.m1.r[i]) == "V12"
+          | names(df.m1.r[i]) == "V83"
+          | names(df.m1.r[i]) == "V286"
+          | names(df.m1.r[i]) == "V288"){
+        df.m1.r[,i] <- str_pad(df.m1.r[,i], 3, pad = "0")
+      }
+      if (names(df.m1.r[i]) == "V62" 
+          | names(df.m1.r[i]) == "V68"
+          | names(df.m1.r[i]) == "V69"
+          | names(df.m1.r[i]) == "V80"
+          | names(df.m1.r[i]) == "V82"
+          | names(df.m1.r[i]) == "V285"){
+        df.m1.r[,i] <- str_pad(df.m1.r[,i], 2, pad = "0")
+      }
+    }
+    
+    # Convert each value to character class
+    df.m1.r[,i] <- as.character(df.m1.r[,i])
+    
+    # Now, if data is missing, convert to -99
+    df.m1.r[(df.m1.r[,i]=="" 
+             | df.m1.r[,i]==" "
+             | df.m1.r[,i]=="  "
+             | df.m1.r[,i]=="   "
+             | df.m1.r[,i]=="    "
+             | df.m1.r[,i]=="     "
+             | df.m1.r[,i]=="00"
+             | df.m1.r[,i]=="000"
+             | df.m1.r[,i]=="0000"
+             | df.m1.r[,i]=="00000"
+             | is.na(df.m1.r[,i])),i] <- "-99"
+    
+    if(names(df.m1.r[i]) %in% isBlnkVar | names(df.m1.r[i]) %in% isNumVar){
+      
+      # This section will process the variables with zero's that have meaning
+      # This will set values to 99 so it can be distributed with missing data
+      df.m1.r[df.m1.r[,i]=="-99" & df.m1.r$MATCH==1,i] <- "0"
+      
+    }
+    
+    if(names(df.m1.r[i]) %in% isZeroVar){
+      
+      # This section will process the variables with zero's that have no meaning
+      # This will set values to NA
+      df.m1.r[(df.m1.r[,i]=="0" | df.m1.r[,i]=="99") & df.m1.r$MATCH==1,i] <- "-99"
+      
+    }
+    
+    if(names(df.m1.r[i]) %in% isYesNoVar) {
+      
+      # This section will process the variables that appear to be dichotomous
+      df.m1.r[df.m1.r[,i]=="-99" & df.m1.r$MATCH==1,i] <- 0
+      df.m1.r[df.m1.r[,i]=="N" & df.m1.r$MATCH==1,i] <- 0
+      df.m1.r[df.m1.r[,i]=="Y"& df.m1.r$MATCH==1,i] <- 1
+      
+    }
+    
+    df.m1.r[(df.m1.r[,i] == "-99" | df.m1.r[,i] == ""),i] <- NA
+    df.m1.r[,i] <- as.factor(df.m1.r[,i])
+    
+    if(spool==1){
+      print(levels(df.m1.r[,i]))
+      cat("\n")
+      print(describe(df.m1.r[,i]))
+      cat("\n")
+      cat("\n")
+    }
+  }
+}
+  
+## Close sink; will close 'df.m1.Part1.txt'
+sink()
+
+```
+
+**Remove obsolete data objects for memory managment**
+
+```{r}
+
+## Remove objects that are no longer needed
+rm(i)
+rm(k)
+rm(l)
+
+```
+
+**Output the latest data.frame 'df.m1.r' as 'df.m1_Part1.csv'**
+
+```{r}
+
+## Send the data to a file
+#  This data file should include only data where MATCH=1
+#  The file can be reviewed with radiant to verify first variable reduction (look in the Addins)
+#  The variables will have missing data
+
+write.csv(df.m1.r
+  , 'C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part1.csv'
+  , quote = FALSE
+)
+
+```
+
+<center> <h2>PART II</h2> </center>
+<center> <h4>(Replace Missing Data using the HelperFunction)</h4> </center>
+
+```{r}
+
+#  Create an update dateframe that can be used to compare with the original
+#  This is necessary as it provides opportunity to see how missing data is changed
+#  Missing data replacement is done by vector to improve memory management
+
+df.m1 <- as.data.frame(df.m1.r)
+
+## One more quick look at the response variables
+print(describe(df.m1$RESP))
+
+```
+
+**Prepare the HelperFunction**
+
+```{r}
+
+## Here we put a small function to deal nicely with missing variables in the non-numeric variables
+# See: https://stackoverflow.com/questions/25241258/replacing-missing-data-in-a-categorical-variable-in-r
+
+helperFunc <- function(x){
+  
+  sample(levels(x), sum(is.na(x)), replace = TRUE,
+         prob = as.numeric(table(x))/sum(!is.na(x)))
+  
+}
+
+```
+
+**Output second diagnostic file of the variables transformation as 'df.m1_Part2_Diag.txt'**
+
+```{r}
+
+## Set up a sink file for variable review
+sink(file = "C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part2_Diag.txt"
+  , append = FALSE
+  , type = c("output", "message")
+  , split = FALSE
+)
+# Get a list of column names
+colNms <- colnames(df.m1.r)
+colCnt <- length(colNms)
+
+k <- 3
+l <- colCnt-1
+#l <- k
+#i <- k
+for (i in k:l){
+  
+  if(!names(df.m1.r[i]) %in% isRespVar){
+    
+    if(spool==1){
+      print(paste(names(df.m1.r[i]),"->",class(df.m1.r[,i])))
+      print(paste("Variable",i))
+      cat("\n")
+    }
+    
+    df.m1[sapply(df.m1[i], is.na),i]  <- unlist(sapply(df.m1[i], helperFunc))
+    
+    if(spool==1){
+      print(describe(df.m1.r[,i]))
+      cat("\n")
+      print(describe(df.m1[,i]))
+      cat("\n")
+      cat("\n")
+    }
+  }
+}
+
+## Close sink
+sink()
+
+```
+
+**Remove obsolete data objects for memory managment**
+
+```{r}
+
+## Remove objects that are no longer needed
+rm(i)
+rm(k)
+rm(l)
+rm(colCnt)
+rm(colNms)
+rm(helperFunc)
+
+```
+
+**Output the latest data.frame 'df.m1' as 'df.m1_Part2.csv'**
+
+```{r}
+## This data file should include only data where MATCH=1
+#  The data has been modified so that the variables will have no missing data
+#  This is data before the variables reductions
+
+write.csv(df.m1
+  , 'C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part2.csv'
+  , quote = FALSE
+)
+
+```
+
+<center> <h2>PART III</h2> </center>
+<center> <h4>(Variable Reduction)</h4> </center>
+
+```{r}
+## Recall that 'df.m1.r' is the data having missing variables; 'df.m1' has no missing data.
+#  Only 176 of the original data variables remain at this point, but this sequence will add
+#  additional dummy variables as required
+#  Confirm the levels for the 'MATCH' variable
+
+unique(df.m1$MATCH)
+
+```
+
+**Remove obsolete data objects for memory managment**
+
+```{r}
+
+rm(df.m1.r)
+rm(isBlnkVar)
+rm(isNumVar)
+rm(isPadVar)
+rm(isYesNoVar)
+rm(isZeroVar)
+rm(package)
+rm(packages)
+
+```
+
+**Reclassify the variables to a specific data type for further variable transformation**
+
+```{r}
+
+## The following is a list of the variables the team decided would be dropped.
+#  This list was provided by Sandra on 10/28/2017 15:36
+isDropVar <- c(
+  "V2", "V7", "V9", "V11", "V12", "V13", "V14", "V29"
+, "V30", "V36", "V37", "V39", "V41", "V58", "V60", "V62"
+, "V65", "V70", "V71", "V75", "V76", "V77", "V78", "V79"
+, "V81", "V82", "V83", "V84", "V87", "V89", "V91", "V92"
+, "V93", "V94", "V96", "V97", "V100", "V102", "V104", "V114"
+, "V115", "V118", "V120", "V133", "V135", "V137", "V139", "V141"
+, "V142", "V143", "V145", "V146", "V147", "V149", "V151", "V153"
+, "V162", "V269", "V285", "V286", "V287", "V288"
+)
+#  This list is added to account for problem variables
+#  They contain mulitple values (i.e. GT 100) that I can't see are needed
+isProbVar <- c(
+  "V80", "V279"
+, "Zip", "Zip4"
+)
+```
+
+**Prepare functions needed for variable transformation and review**
+
+```{r}
+
+## Prepare the funtions
+#  Create a function to discect the year from date variables
+datFun <- function(X){
+  as.integer(substr(X, 1, 4))
+}
+
+#  Create a function to process histograms
+histFun <- function(df, X){
+  
+  par(mfrow=c(1,2))
+  # hist(df[,2][df[,2]>min(df[,2])], main=NULL, xlab="BEFORE", col=gray.colors(12))
+  # hist(df[,3][df[,3]>min(df[,2])], main=NULL, xlab="AFTER", col=gray.colors(12))
+  hist(df[,2], main=NULL, xlab="BEFORE", col=gray.colors(12))
+  hist(df[,3], main=NULL, xlab="AFTER", col=gray.colors(12))
+  title(main=paste("Histogram of",X), outer=TRUE, line=-2)
+  par()
+}
+
+```
+
+**Reset the variable classification lists following previous variable transformation**
+
+```{r}
+
+#  This part of the code is intended to reclassify variables having into variables types that will be
+#  used during modeling.  The variable assignments are to those that were determined during the campus
+#  immersion.
+
+## Define character variables
+isCharVar <- c(
+  "State"
+, "V15", "V80", "V85", "V86", "V109", "V111", "V116", "V117"
+, "V159", "V267", "V268", "V270", "V271", "V273", "V275", "V277"
+, "V279"
+)
+
+## Introduce a new variable classification object for dates
+isDateVar <- c(
+  "V32"
+, "V61"
+, "V98"
+, "V108"
+, "V112"
+)
+
+## Define factor variables
+isFacVar <- c(
+  "Census_Block"
+, "V35", "V40", "V43", "V44", "V45", "V46", "V47", "V59"
+, "V68", "V69", "V74", "V88", "V90", "V134", "V136", "V138"
+, "V140", "V148", "V284", "V289", "V290", "V291", "V292", "V293"
+, "V294", "V295", "V296"
+)
+
+## Define integer variables - these have 0 or 1 values
+isIntVar <- c(
+  "Upmarket", "Match", "days_lt_365"
+, "V95", "V119", "V152", "V163", "V164", "V165", "V166", "V167"
+, "V168", "V169", "V170", "V171", "V172", "V173", "V174", "V175"
+, "V176", "V177", "V178", "V179", "V180", "V181", "V182", "V183"
+, "V184", "V185", "V186", "V187", "V188", "V189", "V190", "V191"
+, "V192", "V193", "V194", "V195", "V196", "V197", "V198", "V199"
+, "V200", "V201", "V202", "V203", "V204", "V205", "V206", "V207"
+, "V208", "V209", "V210", "V211", "V212", "V213", "V214", "V215"
+, "V216", "V217", "V218", "V219", "V220", "V221", "V222", "V223"
+, "V224", "V225", "V226", "V227", "V228", "V229", "V230", "V231"
+, "V232", "V233", "V234", "V235", "V236", "V237", "V238", "V239"
+, "V240", "V241", "V242", "V243", "V244", "V245", "V246", "V247"
+, "V248", "V249", "V250", "V251", "V252", "V253", "V254", "V255"
+, "V256", "V257", "V258", "V259", "V260", "V261", "V262", "V263"
+, "V264", "V265"
+)
+
+## Define numeric variables
+isNumVar <- c(
+  "days_since_last_activity"
+, "V73", "V99", "V101", "V103"
+, "V105", "V106", "V107", "V110"
+, "V113", "V121", "V122", "V123"
+, "V124", "V126", "V127", "V128"
+, "V129", "V130", "V131", "V132"
+, "V144", "V150", "V272", "V274"
+, "V276", "V278")
+
+## Provide for the expected additional variables
+isPlusVar <- c(
+  "V32.d", "V61.d", "V98.d", "V108.d", "V112.d"
+)
+
+isLogVar <- c(
+  "V99", "V101", "V103", "V105", "V106"
+ , "V107", "V113", "V131", "V132"
+)
+
+```
+
+**Prepare a list of the distinct variables for the data frame 'df.m1.r'**
+
+```{r}
+
+## It's assumed that the following variables are kept following the review of the individual
+#  variables against the response variable.  The following is a complete variable list of 
+#  those the team decided to keep.  It is constructed from the individual lists above.
+df.vars.keep <- Reduce(union, list(
+    isRespVar
+  , isCharVar
+  , isDateVar
+  , isFacVar
+  , isIntVar
+  , isNumVar
+  )
+)
+
+## Ensure there are no variables in the 'keep' variables that are considered dropped
+#  df.vars.chk <- df.m1[, (names(df.m1) %in% isDropVar)]
+#  names(df.vars.chk)
+
+## Rebuild 'df.m1' by removing the drop variables provided by Sandra
+#  Thus, the 'df.m1' data reduces to 141 variables
+#  These are in addition to the variables dropped from the previous stage
+df.m1.r <- df.m1[, (!names(df.m1) %in% isDropVar & !names(df.m1) %in% isProbVar)]
+names(df.m1.r)
+
+```
+
+**Output the latest data.frame 'df.m1' as 'df.m1_Part3.csv'**
+
+```{r, fig.width=10, fig.height=5}
+
+## Set up a sink file for variable review
+sink(file = "C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1.Part3_Diag.txt"
+  , append = FALSE
+  , type = c("output", "message")
+  , split = FALSE
+)
+
+#  The current class of each variables needs to be checked and modified, if necessary
+#  This process will start at the third variable as the first two do not require a conversion
+#  - 1: Response; 2: individual_id
+#  At the completion of this loop, there should be several new dummy variables, one for each
+#  factor and character variable.  Another reduction will occur that removes the original variables.
+eor <- dim(df.m1.r)[1]
+eoc <- dim(df.m1.r)[2]
+
+for(i in 3:eoc){
+  
+  if(!names(df.m1.r[i]) %in% isRespVar){
+    
+    # Printing the levels to an output uses too much space
+    # Printing is supressed.
+    
+    # print(paste(names(df.m1.r[i]),"->",class(df.m1.r[,i])))
+    # print(paste("Variable",i))
+    
+    if(names(df.m1.r[i]) %in% isDateVar) {
+      
+      ## Use year function to compute date difference by year
+      if(names(df.m1.r[i])=="V32"){
+        df.m1.r$V32.d <- (2017 - datFun(df.m1.r$V32))
+      }
+      if(names(df.m1.r[i])=="V61"){
+        df.m1.r$V61.d <- (2017 - datFun(df.m1.r$V61))
+      }
+      if(names(df.m1.r[i])=="V98"){
+        df.m1.r$V98.d <- (2017 - datFun(df.m1.r$V98))
+      }
+      if(names(df.m1.r[i])=="V108"){
+        df.m1.r$V108.d <- (2017 - datFun(df.m1.r$V108))
+      }
+      if(names(df.m1.r[i])=="V112"){
+        df.m1.r$V112.d <- (2017 - datFun(df.m1.r$V112))
+      }
+    }
+    
+    if(names(df.m1.r[i]) %in% isCharVar | names(df.m1.r[i]) %in% isFacVar) {
+      
+        uniques <- unique(df.m1.r[i])
+        for (j in uniques) {
+          var_name <- paste0(names(df.m1.r[i]),"_Level_",j)
+          df.m1.r[,var_name] <- if_else(df.m1.r[i] == i, 1, 0)
+        }
+    }
+    
+    if(names(df.m1.r[i]) %in% isNumVar) {
+      
+      df.m1.r[,i] <- as.numeric(df.m1.r[,i])
+      
+      if(names(df.m1.r[i]) == "days_since_last_activity"){
+          var_name <- "days_lt_365"
+          df.m1.r[,var_name] <- if_else(df.m1.r[i] <= 365, 1, 0)
+      }
+    }
+    
+    if(names(df.m1.r[i]) %in% isIntVar | names(df.m1.r[i]) %in% isDateVar) {
+      
+      df.m1.r[,i] <- as.integer(df.m1.r[,i])
+    }
+  }
+}
+
+## Process the log transformations
+#  They were not processed above as the added variables would not be included in the range
+#  of processig variables.  At this point character and factor variables have been converted to
+#  indictor variables and will be removed in the following section so that a numeric matrix can
+#  be created for the correlation matrix in this later stage.
+
+ eor <- dim(df.m1.r)[1]
+ eoc <- dim(df.m1.r)[2]
+
+for(i in 3:eoc){
+
+  if(!names(df.m1.r[i]) %in% isRespVar){
+
+   if(names(df.m1.r[i]) %in% isLogVar | names(df.m1.r[i]) %in% isPlusVar) {
+
+     eov <- dim(df.m1.r)[2] + 1
+     var_name <- paste0("Log_of_",names(df.m1.r[i]))
+
+     if(spool==1){
+       print(summary(df.m1.r)[,i])
+     }
+     df.m1.r[var_name] <- df.m1.r[i]
+     df.m1.r[eov] <- log(df.m1.r[eov] + 1)
+     if(spool==1){
+       print(summary(df.m1.r)[,eov])
+       cat("\n")
+     }
+
+     # Prepare a plot showing the transformation
+     me.df <- data.frame(df.m1.r$RESP, df.m1.r[[i]], df.m1.r[[var_name]])
+     histFun(me.df, var_name)
+   }
+ }
+}
+
+## Remove the original factor and character variables
+#  This will leave the data frame without any text fields
+#  Fields having text have been converted to dummy indicator variables
+df.m1.r2 <- df.m1.r[, (!names(df.m1.r) %in% isCharVar & !names(df.m1.r) %in% isFacVar)]
+if(spool==1){
+  print(names(df.m1.r2))
+  cat("\n")
+}
+
+## Close sink
+sink()
+
+```
+
+**Remove obsolete data objects for memory managment**
+
+```{r}
+
+#  Remove variables categories from the previous stage.
+rm(df.vars.keep)
+rm(eoc)
+rm(eor)
+rm(i)
+rm(j)
+rm(var_name)
+rm(uniques)
+rm(datFun)
+rm(histFun)
+
+```
+
+**Output the latest data.frame 'df.m1.r2' as 'df.m1_Part3.csv'**
+
+```{r}
+
+## Send the data to a file
+#  This data file should include only numeric data where MATCH=1
+#  Variables have been added using calucated fields and mathematical operations
+#  Variables have been removed (reduced) based on observation and by elimination of text variables
+write.csv(df.m1.r2
+  ,'C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part3.csv'
+  , quote = FALSE
+)
+
+```
+
+<center> <h2>PART IV</h2> </center>
+<center> <h4>(Prepare Correlation Matrix)</h4> </center>
+
+```{r}
+
+## This part of the code will prepare a correlation matrix on which to evaluate variable against
+#  the response variable in 'df.m1.r2
+#  Coorelation matrix is based upon a data frame where all variables are numeric
+#  Force 'df.m1.r2' to a numberic matrix
+df.m1.r2 <- mutate_all(df.m1.r2, funs(as.numeric))
+
+if(spool==1){
+  names(df.m1.r2)
+}
+
+```
+
+**Prepare the correlation output**
+
+```{r}
+## Set up a sink file for variable review
+sink(file = "C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part4_Matrix.txt"
+  , append = FALSE
+  , type = c("output", "message")
+  , split = FALSE
+)
+
+#  Computes an ordered list of all variables by correlation with the dependant variable
+#  This will also be used for output format and reporting
+col_names <- c("Variable","Corr","P.Value","abs.Corr")
+var_List <- names(df.m1.r2)[ - which(names(df.m1.r2) == "RESP")]
+list <- data.frame(matrix(nrow = length(var_List), ncol = length(col_names)))
+names(list) <- col_names
+
+#  Loop through the variables and prepare a corrletion coefficient for each against 'RESP'
+#  Variables having a p-value of no more than 5% will be placed into the special list called
+#  'qual.vars' from which a final variable list will be based.
+#  Prepare the first number for the list sequence
+n <- 1
+qual.vars = c()
+
+#  This process will start at the third variable as the first two are not requires
+#  - 1: Response; 2: individual_id
+for (i in 3:(length(var_List))) {
+  
+  # Build a list of all variables for the dendogram
+  # Begin by discerning those variables having a p-value of .05 or less
+  p <- cor.test(df.m1.r2[[var_List[[i]]]], df.m1.r2$RESP)
+  
+  # Replace the missing p-values with a -1 so they can be discarded
+  # Set special variables to capture (and convert) the p-value and variable name
+  p.val <- as.numeric(if_else(is.na(p$p.value), -1, p$p.value))
+  var.nm <- var_List[[i]]
+  
+  # Print the output
+  if(spool==1){
+    print(paste("Variable",i,"is ",var.nm,"and has p-value of",p.val))
+    print(class(p.val))
+    cat("\n")
+  }
+  
+  # Compute an output for all list variables
+  list[n,"Variable"] <- var_List[[i]]
+  list[n,"Corr"] <- p$estimate
+  list[n,"P.Value"] <- p$p.value
+  list[n,"abs.Corr"] <- abs(p$estimate)
+  
+  # Add to the 'qual.vars' list if the p-value of .05 or less
+  # The list will be used for further variable reduction
+  if(p.val >= .00 & p.val <= .05){
+    
+     if (length(qual.vars) == 0){
+       qual.vars <-c(var_List[[i]])
+     } else {
+       qual.vars <-c(qual.vars, var_List[[i]])
+     }
+  }
+  
+  # Increase the list value by 1
+  n <- n + 1
+}
+
+#  Construct the output table for evaluation
+list <- list[order(-list$abs.Corr),]
+kable(list, caption = "Pearson Correlation Coefficients w/RESP")
+
+## Close sink
+sink()
+
+```
+
+**Reduce to the final variable list**
+
+```{r}
+
+## The previous section determined those variable having correlation with the response variable.  This
+#  section will use those variables and prepare a final data frame using only those variables.
+
+df.m1.f <- df.m1.r2[, (names(df.m1.r2) %in% qual.vars)]
+names(df.m1.f)
+
+```
+
+**Output the final data frame 'df.m1.r2' as 'df.m1_Part4.csv'**
+
+```{r}
+
+## Send the data to a file
+#  This data file should include only numeric data where MATCH=1
+#  This data should have no missing data and should be completely numeric
+#  This variables are reduced to a final set based upon a p-value of no more than 5%
+#  This data can be review using radiant (see addins above)
+write.csv(df.m1.f
+  ,'C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part4.csv'
+  , quote = FALSE
+)
+
+```
+**Remove obsolete data objects for memory managment**
+
+```{r}
+
+#  Remove variables categories from the previous stage.
+rm(list)
+rm(col_names)
+rm(i)
+rm(n)
+rm(p)
+rm(var_List)
+
+```
+
+**Output any process warnings as 'df.m1' as 'df.m1_Part4_Warnings.txt'**
+
+```{r}
+
+## Set up a sink file for warnings
+sink(file = "C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part4_Warnings.txt"
+  , append = FALSE
+  , type = c("output", "message")
+  , split = FALSE
+)
+
+print(warnings())
+
+## Close sink
+sink()
+
+```
