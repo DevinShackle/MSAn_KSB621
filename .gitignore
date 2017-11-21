@@ -43,3 +43,10 @@ Thumbs.db
 *.RData
 .Rhistory
 *.rdata
+
+# Data Files #
+##############
+*.csv
+*.xls
+*.xlsx
+*.txt
