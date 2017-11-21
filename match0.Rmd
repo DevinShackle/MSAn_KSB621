@@ -1,0 +1,250 @@
+---
+title: "match0"
+author: "Devin Shackle"
+date: "11/21/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Prepare the R libraries**
+```{R}
+## This continues the code development that began on the AU campus
+#  Identify the package to be used and open the respective libraries
+options(scipen=999)
+
+packages <- c("data.table"
+              , "dplyr"
+              , "GGally"
+              , "ggplot2"
+              , "Hmisc"
+              , "knitr"
+              , "reshape2"
+            #  , "RODBC"
+              , "scales"
+              , "stringr")
+
+for (package in packages) {
+  message(sprintf("Checking that %s is installed...", package))
+  if (!package %in% row.names(installed.packages())) {
+    install.packages(package, repos = "https://cran.rstudio.com")
+  }
+}
+
+library(data.table)
+library(dplyr)
+library(GGally)
+library(ggplot2)
+library(Hmisc)
+library(knitr)
+library(reshape2)
+#library(RODBC)
+library(scales)
+library(stringr)
+
+```
+
+**Read the 100K data into a dataframe and reduce to MATCH = 0**
+
+```{r}
+
+## Get the 100K data from Dropbox
+#PATH_TO_DATA = 'C:/Users/scott/Dropbox/MSAn Capstone - Fall 2017/Data/3. 100K Sampled Data/FINAL2_SAMPLED100.csv' #Scott's Path
+PATH_TO_DATA <- "~/Dropbox/MSAn Capstone - Fall 2017/Data/3. 100K Sampled Data/FINAL2_SAMPLED100.csv" #Devin's Path
+
+## Form the total data frame
+df <- read.csv(PATH_TO_DATA)
+
+## Remove objects that are no longer needed
+rm(package)
+rm(packages)
+#rm(PATH_TO_DATA)
+
+## Split the data into two pieces; this will keep only the non-matched data
+df.m0 <- df[df$MATCH==0,]
+
+##Remove 3rd party variables
+df.m0 <- select(df.m0, c("RESP","individual_id","days_since_last_activity","Upmarket"))
+
+```
+
+## Compute interaction variables
+
+```{r}
+
+df.m0$days_squared <- df.m0$days_since_last_activity**2
+df.m0$days_PROD_Up <- df.m0$days_since_last_activity * df.m0$Upmarket
+df.m0$days_PROD_UpPlusOne <- df.m0$days_since_last_activity * (df.m0$Upmarket + 1)
+df.m0$days_squared_PROD_Up <- df.m0$days_squared * df.m0$Upmarket
+df.m0$days_log <- log(df.m0$days_since_last_activity)
+df.m0$log_days_PROD_UpPlusOne <- log(df.m0$days_PROD_UpPlusOne)
+
+# We will also try standardizing both the days_since and log(days_since) variables
+df.m0$days_stand <- df.m0$days_since_last_activity
+df.m0$days_log_stand <- df.m0$days_log
+df.m0$days_PROD_UpPlusOne_stand <- df.m0$days_PROD_UpPlusOne
+
+df.m0 <- df.m0 %>% mutate_each_(funs(scale(.) %>% as.vector), vars=c("days_stand","days_log_stand","days_PROD_UpPlusOne_stand"))
+
+
+
+```
+
+
+## Split into training and test sets
+
+```{r}
+
+set.seed(1)
+
+train <- sample(1:nrow(df.m0), nrow(df.m0)*0.8) 
+test <- (-train)
+
+
+```
+
+
+## Logistic Regression
+
+
+```{r}
+
+
+# # Null model with only the intercept (specifying the number 1 as a predictor fits a model with just the intercept and no other predictors)
+m0.null <- glm(RESP~1,data=df.m0,subset = train, family=binomial(link="logit"))
+
+# # Full mode with ALL the variables
+m0.full <- glm(RESP~.,data=df.m0,subset = train, family=binomial(link="logit"))
+
+summary(m0.null)
+summary(m0.full)
+
+
+m0.stepwise <- step(m0.null, scope=list(lower=m0.null, upper=m0.full), direction = "both", test="Chisq")
+summary(m0.stepwise)
+
+
+
+```
+
+```{r}
+
+# This function will evaluate a confusion matrix and give a plain-language description of it's impact on both retention of business value and reduction in email volume
+
+evaluateTable <- function(t) {
+  if(class(t) == "table" & length(dim(t)) == 2 & dim(t)[1] == 2 & dim(t)[2] == 2) {
+    trueNegatives <- t[1,1]
+    falseNegatives <- t[1,2]
+    falsePositives <- t[2,1]
+    truePositives <- t[2,2]
+    totalEmails <- trueNegatives + falseNegatives + falsePositives + truePositives
+    maxResp <- falseNegatives + truePositives
+    businessValue <- percent(truePositives / maxResp)
+    emailVolumeReductionPotential <- percent((trueNegatives + falseNegatives) / totalEmails)
+    paste("Retains", businessValue, "of business value and reduces email volume by", emailVolumeReductionPotential, sep = " ")
+  }
+}
+
+```
+
+
+
+```{r}
+## Model with the best 3 variables
+m0.train.best3 <- glm(RESP~days_log+Upmarket+days_PROD_UpPlusOne, data=df.m0, subset = train,family=binomial(link="logit"))
+summary(m0.train.best3)
+
+#use model to predict response in training set
+m0.train.best3.probs <- predict(m0.train.best3,type="response")
+
+# cuttoff probability of 0.1
+m0.train.best3.pred <- ifelse(m0.train.best3.probs>0.1, 1, 0)
+conf.mat <- table(m0.train.best3.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+# cuttoff probability of 0.06
+m0.train.best3.pred <- ifelse(m0.train.best3.probs>0.06, 1, 0)
+conf.mat <- table(m0.train.best3.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+# cuttoff probability of 0.035
+m0.train.best3.pred <- ifelse(m0.train.best3.probs>0.035, 1, 0)
+conf.mat <- table(m0.train.best3.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+```
+
+
+```{r}
+# model with the best 2 variables
+m0.train.best2 <- glm(RESP~days_log+Upmarket, data=df.m0, subset = train,family=binomial(link="logit"))
+summary(m0.train.best2)
+
+#use model to predict response in training set
+m0.train.best2.probs <- predict(m0.train.best2,type="response")
+
+# cuttoff probability of 0.1
+m0.train.best2.pred <- ifelse(m0.train.best2.probs>0.1, 1, 0)
+conf.mat <- table(m0.train.best2.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+# cuttoff probability of 0.06
+m0.train.best2.pred <- ifelse(m0.train.best2.probs>0.06, 1, 0)
+conf.mat <- table(m0.train.best2.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+# cuttoff probability of 0.035
+m0.train.best2.pred <- ifelse(m0.train.best2.probs>0.035, 1, 0)
+conf.mat <- table(m0.train.best2.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+```
+
+```{r}
+#model with the best variable
+
+m0.train.best1 <- glm(RESP~days_PROD_UpPlusOne, data=df.m0, subset = train,family=binomial(link="logit"))
+summary(m0.train.best1)
+
+#use model to predict response in training set
+m0.train.best1.probs <- predict(m0.train.best1,type="response")
+
+# cuttoff probability of 0.1
+m0.train.best1.pred <- ifelse(m0.train.best1.probs>0.1, 1, 0)
+conf.mat <- table(m0.train.best1.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+# cuttoff probability of 0.06
+m0.train.best1.pred <- ifelse(m0.train.best1.probs>0.06, 1, 0)
+conf.mat <- table(m0.train.best1.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+# cuttoff probability of 0.035
+m0.train.best1.pred <- ifelse(m0.train.best1.probs>0.035, 1, 0)
+conf.mat <- table(m0.train.best1.pred,df.m0$RESP[train]) 
+conf.mat
+evaluateTable(conf.mat)
+
+```
+
+
+
+
+```{r}
+# # for evaluating against the test data
+# m0.test.probs <- predict(m0.train.best, newdata = df.m0,type="response")[test]
+# m0.test.pred <- ifelse(m0.test.probs>0.1, 1, 0)
+# conf.mat <- table(m0.test.pred,df.m0$RESP[test]) 
+# conf.mat
+
+```

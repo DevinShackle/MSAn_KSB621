@@ -29,7 +29,7 @@ packages <- c("data.table"
               , "Hmisc"
               , "knitr"
               , "reshape2"
-              , "RODBC"
+            #  , "RODBC"
               , "scales"
               , "stringr")
 
@@ -47,18 +47,19 @@ library(ggplot2)
 library(Hmisc)
 library(knitr)
 library(reshape2)
-library(RODBC)
+#library(RODBC)
 library(scales)
 library(stringr)
 
 ```
 
-**Read the 100K data into a dataframe and reduce to MATH = 1**
+**Read the 100K data into a dataframe and reduce to MATCH = 1**
 
 ```{r}
 
 ## Get the 100K data from Dropbox
-PATH_TO_DATA = 'C:/Users/scott/Dropbox/MSAn Capstone - Fall 2017/Data/3. 100K Sampled Data/FINAL2_SAMPLED100.csv'
+#PATH_TO_DATA = 'C:/Users/scott/Dropbox/MSAn Capstone - Fall 2017/Data/3. 100K Sampled Data/FINAL2_SAMPLED100.csv' #Scott's Path
+PATH_TO_DATA <- "~/Dropbox/MSAn Capstone - Fall 2017/Data/3. 100K Sampled Data/FINAL2_SAMPLED100.csv" #Devin's Path
 
 ## Form the total data frame
 df <- read.csv(PATH_TO_DATA)
@@ -68,7 +69,7 @@ rm(package)
 rm(packages)
 rm(PATH_TO_DATA)
 
-## Split the data into two peices; this will keep on the match data
+## Split the data into two pieces; this will keep on the match data
 df.m1 <- df[df$MATCH==1,]
 
 ```
@@ -238,7 +239,10 @@ isNumVar <- c(
 #  The print spool is large; to turn it off, set spool to zero
 spool <- 0
 
-sink(file = "C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part1_Diag.txt"
+scottsSinkFile <- "C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part1_Diag.txt"
+devinsSinkFile <- "~/Development/MSAn_KSB621/df.m1_Part1_Diag.txt"
+
+sink(file = devinsSinkFile
   , append = FALSE
   , type = c("output", "message")
   , split = FALSE)
@@ -376,8 +380,11 @@ rm(l)
 #  The file can be reviewed with radiant to verify first variable reduction (look in the Addins)
 #  The variables will have missing data
 
+scottsPart1OutputFile <- 'C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part1.csv'
+devinsPart1OutputFile <- '~/Development/MSAn_KSB621/df.m1_Part1.csv'
+
 write.csv(df.m1.r
-  , 'C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part1.csv'
+  , devinsPart1OutputFile
   , quote = FALSE
 )
 
