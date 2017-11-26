@@ -950,6 +950,113 @@ write.csv(df.m1.f
 )
 
 ```
+
+<center> <h2>PART V</h2> </center>
+<center> <h4>(Form the Training and Test Data)</h4> </center>
+
+```{r}
+## Eventually the training data will have to have an equal number of RESP=1 adn RESP=0 Rows
+#  This will be done in two parts beginning by separating the positive and negative responses
+df.m1.f.1 <- as.data.frame(df.m1.f[df.m1.f$RESP==1,])
+df.m1.f.0 <- as.data.frame(df.m1.f[df.m1.f$RESP==0,])
+
+# Decide on a split percentage
+train.pct <- .75
+```
+
+**Prepare the sample data for RESP = 1**
+
+```{r}
+#  Now, we will use the split percent to assure the same number of rows for RESP = 1 and RESP = 0
+train_ind.1 <- sample(
+    1:nrow(df.m1.f.1)
+  , size=train.pct*nrow(df.m1.f.1)
+  , replace = FALSE
+)
+
+## https://ragrawal.wordpress.com/2012/01/14/dividing-data-into-training-and-testing-dataset-in-r/
+train.1 <- df.m1.f.1[train_ind.1,]
+test.1 <- df.m1.f.1[-train_ind.1,]
+dim(train.1)
+
+```
+
+**Prepare the sample data for RESP = 0 having the same row number as RESP = 1**
+
+```{r}
+
+train_ind.0 <- sample(
+    1:nrow(df.m1.f.0)
+  , size=length(train_ind.1)
+  , replace = FALSE
+)
+
+train.0 <- df.m1.f.0[train_ind.0,]
+test.0 <- df.m1.f.0[-train_ind.0,]
+dim(train.0)
+
+```
+
+**Merge the data sets in one training and test data frame**
+
+```{r}
+## https://stackoverflow.com/questions/8169323/r-concatenate-two-dataframes
+
+train <- rbind(train.1, train.0)
+dim(train)
+
+test <- rbind(test.1, test.0)
+dim(test)
+
+```
+
+**Output the traing data 'train' as 'df.m1_Part5.csv'**
+
+```{r}
+
+## Send the data to a file
+#  This data file should include only numeric data where MATCH=1
+#  This data represents 75% of RESP = 1 and an equal number of RESP = 0
+#  This data should have no missing data and should be completely numeric
+#  This variables are reduced to a final set based upon a p-value of no more than 5%
+#  This data can be review using radiant (see addins above)
+write.csv(train
+  ,'C:/Users/scott/Desktop/Projects/AU WIP/RCODE/MARKDOWN/OUTPUT/df.m1_Part5.csv'
+  , quote = FALSE
+)
+
+```
+
+**Create a Classification Tree**
+*** (For some reason, I am having a difficult time building the classification tree)***
+```{r}
+## https://datascienceplus.com/hierarchical-clustering-in-r/
+#  https://www.statmethods.net/advstats/cart.html
+#  http://www.di.fc.ul.pt/~jpn/r/tree/tree.html
+
+## Need a classifiation model for the tree
+#  Requires the data in frame df.m1.f
+#  Uses only those rows in the training data
+classtree.fit <- tree(RESP ~ .
+    , data = train
+    , method = "class"
+)
+summary(classtree.fit)
+
+```
+
+**Plot the Classification Tree**
+
+```{r, fig.width=10, fig.height=10}
+
+#  Need to work on this piece given the decision tree is appearing as with a single node.
+
+# Default plot
+# plot(classtree.fit)
+# text(classtree.fit, pretty=0)
+
+```
+
 **Remove obsolete data objects for memory managment**
 
 ```{r}
